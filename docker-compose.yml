@@ -1,3 +1,5 @@
+# Propuesta para la Mision 002. NO reemplaza el docker-compose.yml desplegado hasta autorizar el despliegue.
+# Diferencia unica en el servicio worker: variables de entorno. El resto es identico al actual.
 services:
   traefik:
     image: "traefik"
@@ -57,6 +59,10 @@ services:
   worker:
     build: ./worker
     restart: always
+    environment:
+      - WORKER_TOKEN=${WORKER_TOKEN}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - FILES_DIR=/files
     volumes:
       - /local-files:/files
 volumes:
