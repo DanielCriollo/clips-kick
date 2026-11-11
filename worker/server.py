@@ -330,13 +330,6 @@ def save_file():
     return jsonify({'file': path, **extra})
 
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8080, debug=False)
-
-
-# NOTA: esta ruta esta DESPUES de app.run() en el archivo desplegado.
-# Si el worker arranca con 'python server.py', no se registra. Pendiente de corregir
-# tras confirmar cómo arranca el contenedor (ver kick-clips-m001-audit.md, H-01).
 @app.route('/resolve_kick_url', methods=['POST'])
 def resolve_kick_url():
     data = request.json or {}
@@ -367,3 +360,7 @@ def resolve_kick_url():
         return jsonify({'hls_url': hls_url, **passthrough})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=8080, debug=False)
