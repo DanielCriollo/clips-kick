@@ -1,0 +1,11 @@
+{
+  "_instructions": "Marca a mano los momentos BUENOS del stream (los que valdrian un clip, completos, con inicio y desenlace). Tiempos en segundos desde el inicio del VOD. Pon 'start' un poco antes del gancho y 'end' despues del desenlace. Anota solo los buenos: el sistema los compara contra lo que selecciono. Si quieres medir falsos positivos, tambien puedes anotar los que el reporte marco y NO sirven en 'rejected_predictions' (opcional, no usado por la metrica actual).",
+  "stream_id": "jaap-z_YYYY-MM-DD",
+  "vod_source": "URL o ID del VOD (sin credenciales)",
+  "labeled_by": "tu nombre o iniciales",
+  "good_events": [
+    { "start": 1234, "end": 1290, "note": "historia completa: presenta el tema y cierra con risa" },
+    { "start": 3100, "end": 3165, "note": "discusion con desenlace" }
+  ],
+  "rejected_predictions": []
+}

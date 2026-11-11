@@ -1,0 +1,360 @@
+{
+  "name": "Transcribir Video Drive v2 (auth)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "aa000001-0000-0000-0000-000000000001",
+      "name": "Inicio Manual",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -11200,
+        576
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "cfg-01",
+              "name": "drive_url",
+              "value": "PEGA_URL_DE_DRIVE_AQUI",
+              "type": "string"
+            },
+            {
+              "id": "cfg-02",
+              "name": "open_ai_key",
+              "value": "TU_OPENAI_API_KEY",
+              "type": "string"
+            },
+            {
+              "id": "cfg-03",
+              "name": "chunk_minutes",
+              "value": 15,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "aa000002-0000-0000-0000-000000000002",
+      "name": "Configuracion",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -10976,
+        576
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const url = $input.first().json.drive_url;\nconst config = $input.first().json;\n\n// Soporta formatos:\n// https://drive.google.com/file/d/{ID}/view\n// https://drive.google.com/open?id={ID}\n// https://docs.google.com/.../{ID}/...\nlet fileId = '';\nconst matchFile = url.match(/\\/file\\/d\\/([a-zA-Z0-9_-]+)/);\nconst matchOpen = url.match(/[?&]id=([a-zA-Z0-9_-]+)/);\nif (matchFile) fileId = matchFile[1];\nelse if (matchOpen) fileId = matchOpen[1];\nif (!fileId) throw new Error('No se pudo extraer el ID del archivo de Drive. URL: ' + url);\n\nreturn [{ json: {\n  file_id:       fileId,\n  open_ai_key:   config.open_ai_key,\n  chunk_minutes: config.chunk_minutes\n}}];"
+      },
+      "id": "aa000003-0000-0000-0000-000000000003",
+      "name": "Extraer ID Drive",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -10752,
+        576
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $json.file_id }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "aa000004-0000-0000-0000-000000000004",
+      "name": "Descargar Video Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -10528,
+        576
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "X9Wl41rAwsEolEus",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://worker:8080/save_file",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "data"
+            },
+            {
+              "name": "chunk_minutes",
+              "value": "={{ $('Extraer ID Drive').first().json.chunk_minutes }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "aa000005-0000-0000-0000-000000000005",
+      "name": "Guardar en Worker",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -10304,
+        576
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REEMPLAZAR_CREDENCIAL_WORKER_TOKEN",
+          "name": "Worker Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://worker:8080/extract_audio",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "input",
+              "value": "={{ $json.file }}"
+            },
+            {
+              "name": "chunk_minutes",
+              "value": "={{ $json.chunk_minutes }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 600000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "aa000006-0000-0000-0000-000000000006",
+      "name": "Extraer Audio",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -10080,
+        576
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REEMPLAZAR_CREDENCIAL_WORKER_TOKEN",
+          "name": "Worker Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://worker:8080/transcribe",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ dir: $json.dir, chunks: $json.chunks, chunk_minutes: $json.chunk_minutes, vod_file: $json.vod_file }) }}",
+        "options": {
+          "timeout": 1200000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "aa000007-0000-0000-0000-000000000007",
+      "name": "Transcribir con Whisper",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -9856,
+        576
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REEMPLAZAR_CREDENCIAL_WORKER_TOKEN",
+          "name": "Worker Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=http://worker:8080/serve_file?path={{ $json.transcript_file }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "aa000008-0000-0000-0000-000000000008",
+      "name": "Leer Transcripcion",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -9632,
+        576
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REEMPLAZAR_CREDENCIAL_WORKER_TOKEN",
+          "name": "Worker Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "name": "=transcripcion_{{ $now.format('yyyy-MM-dd_HH-mm') }}.txt",
+        "driveId": {
+          "__rl": true,
+          "value": "My Drive",
+          "mode": "list",
+          "cachedResultName": "My Drive",
+          "cachedResultUrl": "https://drive.google.com/drive/my-drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "1oi9TnowxVAVS7VOd3c5pyrrCgRbPiulc",
+          "mode": "list",
+          "cachedResultName": "clips",
+          "cachedResultUrl": "https://drive.google.com/drive/folders/1oi9TnowxVAVS7VOd3c5pyrrCgRbPiulc"
+        },
+        "options": {}
+      },
+      "id": "aa000009-0000-0000-0000-000000000009",
+      "name": "Subir Transcripcion",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -9408,
+        576
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "X9Wl41rAwsEolEus",
+          "name": "Google Drive account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Inicio Manual": {
+      "main": [
+        [
+          {
+            "node": "Configuracion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Configuracion": {
+      "main": [
+        [
+          {
+            "node": "Extraer ID Drive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer ID Drive": {
+      "main": [
+        [
+          {
+            "node": "Descargar Video Drive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Descargar Video Drive": {
+      "main": [
+        [
+          {
+            "node": "Guardar en Worker",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar en Worker": {
+      "main": [
+        [
+          {
+            "node": "Extraer Audio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer Audio": {
+      "main": [
+        [
+          {
+            "node": "Transcribir con Whisper",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcribir con Whisper": {
+      "main": [
+        [
+          {
+            "node": "Leer Transcripcion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer Transcripcion": {
+      "main": [
+        [
+          {
+            "node": "Subir Transcripcion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "8141c3d43617c693a50cf8f63a8c751bf2de880aa2fd559b9465181c2ca84ec3"
+  },
+  "nodeGroups": [],
+  "tags": []
+}

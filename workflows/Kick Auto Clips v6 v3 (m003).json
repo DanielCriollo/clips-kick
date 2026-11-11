@@ -1,0 +1,816 @@
+{
+  "name": "Kick Auto Clips v6 v3 (m003)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "bb7dcaaf-1b8e-4abe-a761-d93147a50a8c",
+      "name": "Inicio Manual",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -11216,
+        576
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "k4-a1",
+              "name": "channel",
+              "value": "eldomi",
+              "type": "string"
+            },
+            {
+              "id": "k4-a2",
+              "name": "openAiKey",
+              "value": "TU_OPENAI_API_KEY",
+              "type": "string"
+            },
+            {
+              "id": "k4-a3",
+              "name": "clipDuration",
+              "value": 55,
+              "type": "number"
+            },
+            {
+              "id": "k4-a4",
+              "name": "chunkMinutes",
+              "value": 15,
+              "type": "number"
+            },
+            {
+              "id": "k4-a5",
+              "name": "maxMoments",
+              "value": 50,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c3a5a8ff-9573-48b8-a73f-bc7c620139ba",
+      "name": "Configuracion",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -10992,
+        576
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://kick.com/api/v2/channels/{{ $json.channel }}/videos",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "86f69799-4150-4d13-a80a-d58ea36319d3",
+      "name": "Obtener VODs de Kick",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -10768,
+        576
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const vid = $input.first().json;\nconst cfg = $('Configuracion').first().json;\nif (!vid || !vid.id) throw new Error('No hay VODs para el canal: ' + cfg.channel);\nconst url = vid.source || (vid.video && vid.video.url) || ('https://kick.com/video/' + vid.id);\nreturn [{ json: {\n  vod_url:       url,\n  open_ai_key:   cfg.openAiKey,\n  channel:       cfg.channel,\n  max_moments:   cfg.maxMoments,\n  clip_duration: cfg.clipDuration,\n  chunk_minutes: cfg.chunkMinutes\n}}];"
+      },
+      "id": "82fdd298-b78f-4759-a8e2-744b0ea745c5",
+      "name": "Extraer URL del VOD",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -10560,
+        576
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://worker:8080/download",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "url",
+              "value": "={{ $json.vod_url }}"
+            },
+            {
+              "name": "quality",
+              "value": "360p"
+            },
+            {
+              "name": "channel",
+              "value": "={{ $json.channel }}"
+            },
+            {
+              "name": "max_moments",
+              "value": "={{ $json.max_moments }}"
+            },
+            {
+              "name": "clip_duration",
+              "value": "={{ $json.clip_duration }}"
+            },
+            {
+              "name": "chunk_minutes",
+              "value": "={{ $json.chunk_minutes }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 7200000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "7e0f97b2-9179-4c44-8893-2d8f1c9650d9",
+      "name": "Descargar VOD",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -10336,
+        576
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REEMPLAZAR_CREDENCIAL_WORKER_TOKEN",
+          "name": "Worker Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://worker:8080/extract_audio",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "input",
+              "value": "={{ $json.file }}"
+            },
+            {
+              "name": "chunk_minutes",
+              "value": "={{ $json.chunk_minutes }}"
+            },
+            {
+              "name": "channel",
+              "value": "={{ $json.channel }}"
+            },
+            {
+              "name": "max_moments",
+              "value": "={{ $json.max_moments }}"
+            },
+            {
+              "name": "clip_duration",
+              "value": "={{ $json.clip_duration }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 600000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "d4931274-2fd3-4bf5-8163-ce49f80a1c58",
+      "name": "Extraer Audio",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -10112,
+        576
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REEMPLAZAR_CREDENCIAL_WORKER_TOKEN",
+          "name": "Worker Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://worker:8080/transcribe",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ dir: $json.dir, chunks: $json.chunks, chunk_minutes: $json.chunk_minutes, vod_file: $json.vod_file, channel: $json.channel, max_moments: $json.max_moments, clip_duration: $json.clip_duration }) }}",
+        "options": {
+          "timeout": 1200000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "4b4fe61f-e900-46a1-9d0a-706b03bcfa40",
+      "name": "Transcribir con Whisper",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -9888,
+        576
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REEMPLAZAR_CREDENCIAL_WORKER_TOKEN",
+          "name": "Worker Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://worker:8080/detect_moments",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "transcript",
+              "value": "={{ $json.transcript }}"
+            },
+            {
+              "name": "channel",
+              "value": "={{ $json.channel }}"
+            },
+            {
+              "name": "max_moments",
+              "value": "={{ $json.max_moments }}"
+            },
+            {
+              "name": "vod_file",
+              "value": "={{ $json.vod_file }}"
+            },
+            {
+              "name": "audio_dir",
+              "value": "={{ $json.audio_dir }}"
+            },
+            {
+              "name": "clip_duration",
+              "value": "={{ $json.clip_duration }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 300000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "75b55876-c4b2-4d96-8c5f-bdda8797723b",
+      "name": "Detectar Momentos GPT",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -9680,
+        576
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REEMPLAZAR_CREDENCIAL_WORKER_TOKEN",
+          "name": "Worker Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst moments = data.moments || [];\nif (moments.length === 0) {\n  return [{ json: { found: false, message: 'GPT no encontro momentos interesantes' } }];\n}\nreturn moments.map(function(m) {\n  // M003: inicio y duracion reales resueltos por el backend desde segmentos de Whisper.\n  // Respaldo: formato anterior (timestamp - 10 s y 55 s fijos).\n  const hasStart = m.start_seconds !== undefined && m.start_seconds !== null;\n  const hasDuration = m.duration_seconds !== undefined && m.duration_seconds !== null;\n  const start = hasStart ? Number(m.start_seconds) : Math.max(0, (m.timestamp_seconds || 0) - 10);\n  const duration = hasDuration ? Number(m.duration_seconds) : (parseInt(m.clip_duration) || 55);\n  return { json: {\n    found: true,\n    timestamp: Math.max(0, Math.floor(start)),\n    type: m.type || '',\n    tiktok_title: m.tiktok_title || m.type || '',\n    tiktok_description: m.tiktok_description || '',\n    call_to_action: m.call_to_action || '',\n    reason: m.reason || '',\n    quote: m.quote || '',\n    score: m.score || 0,\n    rank: m.rank || 0,\n    vodFile: m.vod_file || '',\n    audioDir: m.audio_dir || '',\n    reportFile: m.report_file || '/files/report_latest.txt',\n    clipDuration: Math.max(1, Math.round(duration))\n  }};\n});"
+      },
+      "id": "ebb8c96d-46aa-48d8-a70e-a09d1b677c37",
+      "name": "Parsear Momentos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -9456,
+        576
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "k4-c1",
+              "leftValue": "={{ $json.found }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ca382722-7e12-4474-821a-e12cf9040133",
+      "name": "Momentos encontrados",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -9232,
+        576
+      ]
+    },
+    {
+      "parameters": {
+        "options": {
+          "reset": false
+        }
+      },
+      "id": "c9cfc57f-e109-4d1b-aaef-a4cc26484ba3",
+      "name": "Loop de Clips",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -9008,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://worker:8080/clip",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "input",
+              "value": "={{ $json.vodFile }}"
+            },
+            {
+              "name": "start",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "duration",
+              "value": "={{ $json.clipDuration }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 300000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "472c7868-0236-4796-ad0a-c809dd232484",
+      "name": "Crear Clip",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -8800,
+        448
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REEMPLAZAR_CREDENCIAL_WORKER_TOKEN",
+          "name": "Worker Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=http://worker:8080/serve_file?path={{ $json.file }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "cd1edc6d-529e-437b-9580-feb8a46ca5eb",
+      "name": "Leer Clip",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -8592,
+        448
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REEMPLAZAR_CREDENCIAL_WORKER_TOKEN",
+          "name": "Worker Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "name": "={{ $('Loop de Clips').item.json.tiktok_title.replace(/[^a-zA-Z0-9áéíóúñÁÉÍÓÚÑ ]/g,'').trim().substring(0,50).replace(/ +/g,'_') + '_' + $('Loop de Clips').item.json.timestamp + 's.mp4' }}",
+        "driveId": {
+          "__rl": true,
+          "value": "My Drive",
+          "mode": "list",
+          "cachedResultName": "My Drive",
+          "cachedResultUrl": "https://drive.google.com/drive/my-drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "1oi9TnowxVAVS7VOd3c5pyrrCgRbPiulc",
+          "mode": "list",
+          "cachedResultName": "clips",
+          "cachedResultUrl": "https://drive.google.com/drive/folders/1oi9TnowxVAVS7VOd3c5pyrrCgRbPiulc"
+        },
+        "options": {}
+      },
+      "id": "7a59ed1b-8e34-4896-8e1a-cbbb9a5f1efc",
+      "name": "Subir a Google Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -8368,
+        448
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "X9Wl41rAwsEolEus",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://worker:8080/cleanup",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "path",
+              "value": "={{ $json.audioDir }}"
+            }
+          ]
+        },
+        "options": {},
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "98bec6a1-469a-44e3-ae67-96e19ef68877",
+      "name": "Limpiar Audio",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -8800,
+        272
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REEMPLAZAR_CREDENCIAL_WORKER_TOKEN",
+          "name": "Worker Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://worker:8080/cleanup",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "path",
+              "value": "={{ $('Parsear Momentos').item.json.vodFile }}"
+            }
+          ]
+        },
+        "options": {},
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "1ef172e3-720a-408e-ab4e-d34c4190a5a8",
+      "name": "Limpiar VOD",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -8592,
+        272
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REEMPLAZAR_CREDENCIAL_WORKER_TOKEN",
+          "name": "Worker Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Solo subir el reporte una vez (con el primer item)\nconst items = $input.all();\nif (!items || items.length === 0) return [];\nconst reportFile = $('Parsear Momentos').first().json.reportFile || '/files/report_latest.txt';\nreturn [{ json: { report_file: reportFile } }];"
+      },
+      "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "name": "Preparar Reporte",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -8352,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=http://worker:8080/serve_file?path={{ $json.report_file }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+      "name": "Leer Reporte",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -8128,
+        272
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REEMPLAZAR_CREDENCIAL_WORKER_TOKEN",
+          "name": "Worker Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "name": "={{ 'reporte_clips_' + new Date().toISOString().slice(0,10) + '.txt' }}",
+        "driveId": {
+          "__rl": true,
+          "value": "My Drive",
+          "mode": "list",
+          "cachedResultName": "My Drive",
+          "cachedResultUrl": "https://drive.google.com/drive/my-drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "1oi9TnowxVAVS7VOd3c5pyrrCgRbPiulc",
+          "mode": "list",
+          "cachedResultName": "clips",
+          "cachedResultUrl": "https://drive.google.com/drive/folders/1oi9TnowxVAVS7VOd3c5pyrrCgRbPiulc"
+        },
+        "options": {}
+      },
+      "id": "c3d4e5f6-a7b8-9012-cdef-012345678902",
+      "name": "Subir Reporte",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -7904,
+        272
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "X9Wl41rAwsEolEus",
+          "name": "Google Drive account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Inicio Manual": {
+      "main": [
+        [
+          {
+            "node": "Configuracion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Configuracion": {
+      "main": [
+        [
+          {
+            "node": "Obtener VODs de Kick",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Obtener VODs de Kick": {
+      "main": [
+        [
+          {
+            "node": "Extraer URL del VOD",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer URL del VOD": {
+      "main": [
+        [
+          {
+            "node": "Descargar VOD",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Descargar VOD": {
+      "main": [
+        [
+          {
+            "node": "Extraer Audio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer Audio": {
+      "main": [
+        [
+          {
+            "node": "Transcribir con Whisper",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcribir con Whisper": {
+      "main": [
+        [
+          {
+            "node": "Detectar Momentos GPT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detectar Momentos GPT": {
+      "main": [
+        [
+          {
+            "node": "Parsear Momentos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parsear Momentos": {
+      "main": [
+        [
+          {
+            "node": "Momentos encontrados",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Momentos encontrados": {
+      "main": [
+        [
+          {
+            "node": "Loop de Clips",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Loop de Clips": {
+      "main": [
+        [
+          {
+            "node": "Limpiar Audio",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Crear Clip",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Crear Clip": {
+      "main": [
+        [
+          {
+            "node": "Leer Clip",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer Clip": {
+      "main": [
+        [
+          {
+            "node": "Subir a Google Drive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Subir a Google Drive": {
+      "main": [
+        [
+          {
+            "node": "Loop de Clips",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Limpiar Audio": {
+      "main": [
+        [
+          {
+            "node": "Limpiar VOD",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Limpiar VOD": {
+      "main": [
+        [
+          {
+            "node": "Preparar Reporte",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Reporte": {
+      "main": [
+        [
+          {
+            "node": "Leer Reporte",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer Reporte": {
+      "main": [
+        [
+          {
+            "node": "Subir Reporte",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "8141c3d43617c693a50cf8f63a8c751bf2de880aa2fd559b9465181c2ca84ec3"
+  },
+  "nodeGroups": [],
+  "tags": []
+}

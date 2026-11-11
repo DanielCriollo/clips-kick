@@ -21,6 +21,7 @@ from functools import wraps
 from urllib.parse import urlparse
 
 import requests as http_client
+import engine
 from flask import Flask, request, jsonify, send_file as flask_send_file
 
 app = Flask(__name__)
@@ -321,8 +322,11 @@ def openai_post(url, api_key, label, **kwargs):
     raise RetryableApiError(f'{label}: agotados {MAX_RETRIES} intentos ({last_error})')
 
 
-def transcribe_chunk(api_key, chunk_path, chunk_name, offset_secs):
-    """Devuelve lineas '[m:ss] texto'. Lanza error si la respuesta no es valida."""
+def transcribe_chunk(api_key, chunk_path, chunk_name):
+    """Devuelve los segmentos crudos de Whisper: [{'start', 'end', 'text'}].
+
+    Lanza error si la respuesta no cumple el contrato (verbose_json con 'segments').
+    """
     with open(chunk_path, 'rb') as f:
         payload = openai_post(
             'https://api.openai.com/v1/audio/transcriptions', api_key,
@@ -333,104 +337,40 @@ def transcribe_chunk(api_key, chunk_path, chunk_name, offset_secs):
         )
     if not isinstance(payload, dict) or not isinstance(payload.get('segments', []), list):
         raise PermanentApiError(f'whisper {chunk_name}: respuesta sin segmentos validos')
-    lines = []
-    for seg in payload.get('segments', []):
-        if not isinstance(seg, dict):
-            continue
-        start = seg.get('start')
-        text = seg.get('text')
-        if not isinstance(start, (int, float)) or not isinstance(text, str):
-            continue
-        text = ' '.join(text.split())
-        if not text:
-            continue
-        t = offset_secs + float(start)
-        lines.append(f'[{int(t // 60)}:{int(t % 60):02d}] {text}')
-    return lines
+    return [s for s in payload.get('segments', []) if isinstance(s, dict)]
 
 
-def split_transcript(transcript, section_minutes=15):
-    lines_by_section = {}
-    last_idx = 0
-    for line in transcript.split('\n'):
-        line = line.strip()
-        if not line:
-            continue
-        match = re.match(r'\[(\d+):(\d+)\]', line)
-        if match:
-            total_secs = int(match.group(1)) * 60 + int(match.group(2))
-            last_idx = total_secs // (section_minutes * 60)
-        lines_by_section.setdefault(last_idx, []).append(line)
-    return [
-        (idx * section_minutes * 60, '\n'.join(lines))
-        for idx, lines in sorted(lines_by_section.items())
-    ]
+def load_segments(job_dir, transcript_text):
+    """Segmentos con ID para la deteccion.
+
+    Preferido: segments.json del job (IDs asignados en la transcripcion).
+    Respaldo: parsear lineas '[m:ss] texto' de la transcripcion recibida (compatibilidad).
+    """
+    path = os.path.join(job_dir, 'segments.json')
+    if os.path.isfile(path):
+        with open(path, encoding='utf-8') as f:
+            data = json.load(f)
+        return [s for s in data.get('segments', []) if isinstance(s, dict) and 'id' in s]
+    items = []
+    for line in (transcript_text or '').split('\n'):
+        match = re.match(r'\[(\d+):(\d+)\]\s*(.*)', line.strip())
+        if match and match.group(3).strip():
+            items.append({'start': int(match.group(1)) * 60 + int(match.group(2)),
+                          'end': None, 'text': match.group(3).strip()})
+    for i, item in enumerate(items):
+        item['end'] = items[i + 1]['start'] if i + 1 < len(items) else item['start'] + 2.0
+    return engine.assign_segment_ids(items)
 
 
-def quote_is_real(quote, section_text):
-    """Verifica que la cita tenga palabras que realmente aparezcan en la transcripcion."""
-    if not quote or len(quote) < 5:
-        return True
-    words = [w.lower().strip('.,!?¡¿"\'()') for w in quote.split() if len(w) > 3]
-    if not words:
-        return True
-    text_lower = section_text.lower()
-    matches = sum(1 for w in words if w in text_lower)
-    return (matches / len(words)) >= 0.5
-
-
-def deduplicate(moments, min_gap=90):
-    result = []
-    used = []
-    for m in sorted(moments, key=lambda x: x.get('timestamp_seconds', 0)):
-        ts = m.get('timestamp_seconds', 0)
-        if not any(abs(ts - u) < min_gap for u in used):
-            result.append(m)
-            used.append(ts)
-    return result
-
-
-def call_gpt_for_section(api_key, channel, section_text, section_start, moments_per_section=8):
-    # Prompt sin cambios respecto a la version desplegada (Mision 002 no redisena prompts).
-    section_start_min = section_start // 60
-    section_end_min = section_start_min + 15
-
-    system_msg = (
-        f'Eres un editor experto de TikTok para streams de {channel} en espanol latinoamericano. '
-        f'Analiza SOLO el texto que te doy (minutos {section_start_min} a {section_end_min} del stream) '
-        f'y encuentra momentos reales para clips.\n\n'
-        f'TIPOS DE MOMENTOS: revelaciones personales, opiniones fuertes, anuncios, '
-        f'situaciones en stream, interacciones con chat, historias, reacciones, frases memorables, retos.\n\n'
-        f'REGLAS ABSOLUTAS:\n'
-        f'1. SOLO incluye momentos que esten TEXTUALMENTE en la transcripcion que te doy\n'
-        f'2. El campo "quote" DEBE ser una frase que aparezca literalmente en el texto\n'
-        f'3. El timestamp_seconds es el segundo ABSOLUTO del stream (no relativo a la seccion)\n'
-        f'   Ejemplo: si ves [45:30] en el texto, timestamp_seconds = 2730\n'
-        f'4. Si no hay momentos buenos en este fragmento, devuelve moments: []\n'
-        f'5. NO inventes nada. Solo lo que esta escrito.\n'
-        f'6. Devuelve UNICAMENTE JSON valido, sin texto adicional'
-    )
-
-    user_msg = (
-        f'Fragmento del stream de {channel} ({section_start_min} a {section_end_min} min). '
-        f'Encuentra hasta {moments_per_section} momentos. '
-        f'Timestamps en [minutos:segundos].\n\n'
-        f'{section_text}\n\n'
-        f'JSON:\n'
-        f'{{"moments":[{{"timestamp_seconds":2730,"type":"revelacion",'
-        f'"tiktok_title":"Titulo llamativo con emoji",'
-        f'"tiktok_description":"2 lineas describiendo el momento",'
-        f'"call_to_action":"Frase de engagement",'
-        f'"reason":"por que es viral",'
-        f'"quote":"frase textual del stream"}}]}}'
-    )
-
+def call_gpt_for_window(api_key, channel, window, segments_by_id):
+    """Una llamada por ventana. Devuelve candidatos crudos (sin validar)."""
+    system_msg, user_msg = engine.build_prompts(channel, window, segments_by_id)
     payload = openai_post(
         'https://api.openai.com/v1/chat/completions', api_key,
-        label=f'gpt seccion {section_start_min}min',
+        label=f'gpt ventana {fmt_window(window)}',
         json={
             'model': 'gpt-4o-mini',
-            'max_tokens': 3000,
+            'max_tokens': 4000,
             'messages': [
                 {'role': 'system', 'content': system_msg},
                 {'role': 'user', 'content': user_msg},
@@ -438,31 +378,17 @@ def call_gpt_for_section(api_key, channel, section_text, section_start, moments_
         },
     )
     try:
-        content = payload['choices'][0]['message']['content'].strip()
+        content = payload['choices'][0]['message']['content']
     except (KeyError, IndexError, TypeError):
         raise PermanentApiError('gpt: respuesta sin contenido')
-    if content.startswith('```'):
-        lines = [l for l in content.split('\n') if not l.startswith('```')]
-        content = '\n'.join(lines).strip()
     try:
-        parsed = json.loads(content)
-    except ValueError:
-        raise PermanentApiError('gpt: JSON de momentos invalido')
-    moments = parsed.get('moments', []) if isinstance(parsed, dict) else []
-    if not isinstance(moments, list):
-        raise PermanentApiError('gpt: campo moments invalido')
+        return engine.parse_model_content(content)
+    except engine.CandidateError as exc:
+        raise PermanentApiError(f'gpt: {exc}')
 
-    valid = []
-    for m in moments:
-        if not isinstance(m, dict):
-            continue
-        ts = m.get('timestamp_seconds')
-        if not isinstance(ts, (int, float)) or isinstance(ts, bool):
-            continue
-        m['timestamp_seconds'] = int(ts)
-        if quote_is_real(m.get('quote', ''), section_text):
-            valid.append(m)
-    return valid
+
+def fmt_window(window):
+    return f"{engine.fmt_time(window['start'])}-{engine.fmt_time(window['end'])}"
 
 
 # ---------------------------------------------------------------------------
@@ -560,19 +486,20 @@ def transcribe():
     chunk_minutes = clamp_int(data.get('chunk_minutes', 15), 15, 1, 30)
     api_key = openai_key()
 
-    parts, failed = [], []
+    collected, failed = [], []
     for i, name in enumerate(chunks):
         path = os.path.join(audio_real, name)
         if not os.path.isfile(path):
             failed.append({'chunk': name, 'error': 'archivo inexistente'})
             continue
         try:
-            parts.extend(transcribe_chunk(api_key, path, name, i * chunk_minutes * 60))
+            raw = transcribe_chunk(api_key, path, name)
+            collected.extend(engine.build_segments(raw, offset_seconds=i * chunk_minutes * 60))
         except WorkerError as e:
             failed.append({'chunk': name, 'error': str(e)})
             log(logging.ERROR, 'chunk fallido', chunk=name, error_code=e.code)
 
-    # Un chunk fallido deja huecos en la transcripcion; se falla todo en vez de producir clips sobre texto incompleto.
+    # Un chunk fallido deja huecos: no se producen clips sobre texto incompleto.
     if failed:
         return jsonify({
             'error': f'Whisper fallo en {len(failed)} de {len(chunks)} chunk(s)',
@@ -580,15 +507,23 @@ def transcribe():
             'failed_chunks': failed,
         }), 502
 
-    transcript = '\n'.join(parts) + ('\n' if parts else '')
-    if not transcript.strip():
+    segments = engine.assign_segment_ids(collected)
+    if not segments:
         raise PermanentApiError('transcripcion vacia (sin segmentos en ningun chunk)')
+
+    transcript = '\n'.join(f"[{engine.fmt_time(s['start'])}] {s['text']}" for s in segments) + '\n'
     transcript_path = os.path.join(job_dir, 'transcript.txt')
     with open(transcript_path, 'w', encoding='utf-8') as f:
         f.write(transcript)
+    segments_path = os.path.join(job_dir, 'segments.json')
+    with open(segments_path, 'w', encoding='utf-8') as f:
+        json.dump({'version': 1, 'chunk_minutes': chunk_minutes, 'segments': segments},
+                  f, ensure_ascii=False)
     return jsonify({
         'transcript': transcript,
         'transcript_file': transcript_path,
+        'segments_file': segments_path,
+        'segments_count': len(segments),
         'audio_dir': audio_real,
         'job_id': os.path.basename(job_dir),
         **passthrough_from(data, {'dir', 'chunks', 'chunk_minutes'}),
@@ -599,69 +534,82 @@ def transcribe():
 @require_token
 def detect_moments():
     data = request_json()
-    transcript = data.get('transcript', '')
-    if not isinstance(transcript, str) or not transcript.strip():
-        raise ValidationError('Transcripcion vacia')
     channel = re.sub(r'[^\w\- ]', '', str(data.get('channel', 'stream')))[:50].strip() or 'stream'
-    max_moments = clamp_int(data.get('max_moments', 50), 50, 1, 100)
-    section_minutes = 15
+    max_moments = clamp_int(data.get('max_moments', 50), 50, 1, 150)
     api_key = openai_key()
 
     job_dir = job_dir_for(data.get('vod_file', '')) or job_dir_for(data.get('audio_dir', ''))
     if not job_dir:
         raise ValidationError('Falta vod_file o audio_dir dentro de un job')
 
-    sections = split_transcript(transcript, section_minutes=section_minutes)
-    moments_per_section = max(5, max_moments // max(len(sections), 1))
-    all_moments, errors = [], []
-    for section_start, section_text in sections:
-        if not section_text.strip():
-            continue
-        try:
-            all_moments.extend(call_gpt_for_section(api_key, channel, section_text, section_start, moments_per_section))
-        except WorkerError as e:
-            errors.append(f'Seccion {section_start // 60}min: {e}')
-            log(logging.ERROR, 'seccion fallida', section_min=section_start // 60, error_code=e.code)
+    segments = load_segments(job_dir, data.get('transcript', ''))
+    if not segments:
+        raise ValidationError('No hay segmentos de transcripcion para este job')
+    segments_by_id = engine.index_by_id(segments)
 
-    analyzed = [s for s in sections if s[1].strip()]
-    if analyzed and len(errors) == len(analyzed):
+    vod_real = safe_real_path(data.get('vod_file', ''), jobs_root())
+    vod_duration = probe_duration(vod_real) if vod_real and os.path.isfile(vod_real) else None
+
+    windows = engine.build_windows(segments)
+    raw_candidates, errors = [], []
+    for window in windows:
+        try:
+            raw_candidates.extend(call_gpt_for_window(api_key, channel, window, segments_by_id))
+        except WorkerError as e:
+            errors.append(f'Ventana {fmt_window(window)}: {e}')
+            log(logging.ERROR, 'ventana fallida', window=fmt_window(window), error_code=e.code)
+
+    if windows and len(errors) == len(windows):
         return jsonify({
-            'error': 'Todas las secciones fallaron en GPT',
+            'error': 'Todas las ventanas fallaron en GPT',
             'error_code': 'detection_failed',
             'errors': errors,
         }), 502
 
-    all_moments.sort(key=lambda m: m.get('timestamp_seconds', 0))
-    all_moments = deduplicate(all_moments, min_gap=90)[:max_moments]
+    selected, discards = engine.process_candidates(
+        raw_candidates, segments, vod_duration=vod_duration, max_moments=max_moments)
+
+    with open(os.path.join(job_dir, 'candidates.json'), 'w', encoding='utf-8') as f:
+        json.dump({'candidates_raw': len(raw_candidates), 'selected': selected,
+                   'discards': discards, 'errors': errors}, f, ensure_ascii=False, indent=2)
 
     today = datetime.date.today().strftime('%Y-%m-%d')
     report_path = os.path.join(job_dir, 'report.txt')
     with open(report_path, 'w', encoding='utf-8') as f:
         f.write(f'REPORTE DE CLIPS - {channel.upper()} - {today}\n')
-        f.write(f'Total: {len(all_moments)} clips en {len(sections)} secciones de {section_minutes} min\n')
+        f.write(f'Ventanas analizadas: {len(windows)} | candidatos crudos: {len(raw_candidates)} | '
+                f'seleccionados: {len(selected)} | descartados: {len(discards)}\n')
         if errors:
             f.write(f'Errores: {"; ".join(errors)}\n')
         f.write('=' * 60 + '\n\n')
-        for i, m in enumerate(all_moments, 1):
-            ts = m.get('timestamp_seconds', 0)
-            start = max(0, ts - 10)
-            f.write(f'=== CLIP {i} ===\n')
-            f.write(f'Tiempo en stream: {ts // 60}:{ts % 60:02d}\n')
-            f.write(f'Tipo: {m.get("type", "")}\n')
-            f.write(f'Titulo TikTok: {m.get("tiktok_title", "")}\n')
-            f.write(f'Descripcion: {m.get("tiktok_description", "")}\n')
-            f.write(f'Call to Action: {m.get("call_to_action", "")}\n')
-            f.write(f'Frase clave: {m.get("quote", "")}\n')
-            f.write(f'Por que es viral: {m.get("reason", "")}\n')
-            f.write(f'Inicio sugerido: {start}s\n\n')
+        for cand in selected:
+            f.write(f"=== CLIP {cand['rank']} (puntuacion {cand['score']}) ===\n")
+            f.write(f"Inicio: {engine.fmt_time(cand['start_seconds'])} | "
+                    f"Duracion: {cand['duration_seconds']}s | Tipo: {cand['type']}\n")
+            f.write(f"Titulo TikTok: {cand['tiktok_title']}\n")
+            f.write(f"Descripcion: {cand['tiktok_description']}\n")
+            f.write(f"Call to Action: {cand['call_to_action']}\n")
+            f.write(f"Gancho: {cand['hook']}\n")
+            f.write(f"Frase clave: {cand['quote']}\n")
+            f.write(f"Por que: {cand['reason']}\n\n")
 
-    # vod_file, audio_dir y clip_duration deben viajar: Parsear Momentos en n8n los necesita.
     passthrough = passthrough_from(data, {'transcript', 'channel', 'max_moments'})
-    enriched = [{**m, **passthrough, 'report_file': report_path} for m in all_moments]
+    moments = []
+    for cand in selected:
+        moments.append({
+            **passthrough,
+            **cand,
+            # Compatibilidad con el Parsear Momentos actual (timestamp - 10 = inicio real).
+            'timestamp_seconds': round(cand['start_seconds'] + 10, 2),
+            'clip_duration': int(round(cand['duration_seconds'])),
+            'report_file': report_path,
+        })
     return jsonify({
-        'moments': enriched,
-        'count': len(enriched),
-        'sections_analyzed': len(sections),
+        'moments': moments,
+        'count': len(moments),
+        'windows_analyzed': len(windows),
+        'candidates_raw': len(raw_candidates),
+        'discards_total': len(discards),
         'report_file': report_path,
         'errors': errors,
         'job_id': os.path.basename(job_dir),
@@ -674,26 +622,26 @@ def clip():
     data = request_json()
     real_input, job_dir = require_job_file(data.get('input', ''))
     try:
-        start = max(0, int(float(data.get('start', 0))))
-        requested = max(1, int(float(data.get('duration', 55))))
+        start = max(0.0, float(data.get('start', 0)))
+        requested = max(1.0, float(data.get('duration', 55)))
     except (TypeError, ValueError):
         raise ValidationError('start o duration no numericos')
 
     vod_duration = probe_duration(real_input)
     if start >= vod_duration:
         raise ValidationError(f'start ({start}s) esta fuera del VOD ({int(vod_duration)}s)')
-    effective = min(requested, int(vod_duration - start))
+    effective = min(requested, vod_duration - start)
     if effective < 1:
         raise ValidationError('El clip resultante duraria menos de 1 segundo')
 
     clip_dir = os.path.join(job_dir, 'clips')
     os.makedirs(clip_dir, exist_ok=True)
-    output_file = os.path.join(clip_dir, f'clip_{start}s_{uuid.uuid4().hex[:8]}.mp4')
+    output_file = os.path.join(clip_dir, f'clip_{int(start)}s_{uuid.uuid4().hex[:8]}.mp4')
 
     try:
         run_tool([
             'ffmpeg', '-n', '-ss', str(start), '-i', real_input,
-            '-t', str(effective),
+            '-t', f'{effective:.2f}',
             '-vf', 'scale=608:1080:force_original_aspect_ratio=decrease,pad=608:1080:(ow-iw)/2:(oh-ih)/2:black',
             '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
             '-c:a', 'aac', '-b:a', '128k', output_file,
