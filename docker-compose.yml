@@ -1,5 +1,4 @@
-# Propuesta para la Mision 002. NO reemplaza el docker-compose.yml desplegado hasta autorizar el despliegue.
-# Diferencia unica en el servicio worker: variables de entorno. El resto es identico al actual.
+# Docker Compose de Kick Clips. El servicio worker recibe WORKER_TOKEN y OPENAI_API_KEY desde .env.
 services:
   traefik:
     image: "traefik"
